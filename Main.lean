@@ -1,59 +1,48 @@
 import «TestProject»
 import Lean
-import Lean.Meta
-import Lean.Meta.Tactic.TryThis
-import Std.Linter
-import Std.Tactic.Basic
-import Std.Linter.UnreachableTactic
+import Std
 
 
 open Std Linter
 open Lean Meta Tactic TryThis
+open Elab
+open Tactic
+open Command
+open Term
 
 
-def suggestSimplifiedHaveSyntax (ref : Syntax) (stx : Syntax) : MetaM Unit := do
-  -- if the syntax is a 'have' tactic
+
+def suggestSimplifiedHaveSyntax  (stx : Syntax) : TermElabM Unit := do
   match stx with
-  | `(tactic| have $hyp : $type := $proof) => do
-    let replacementText : String := s!""
-    let suggestion : TryThis.Suggestion := {
-      suggestion := replacementText,
+  | `(tactic| have $hyp := $proof) => do
+    -- Expr in a MetaM context
+    let proofExpr ←  elabTerm proof none
+    let proofType ← inferType proofExpr
+    let typeStx ← PrettyPrinter.delab proofType
+
+    let suggestionText ←  `(tactic | have $hyp : $typeStx := $proof)
+    let suggestion: TryThis.Suggestion := {
+      suggestion := suggestionText,
       preInfo? := none,
       postInfo? := none,
       style? := none
     }
-    TryThis.addSuggestion ref suggestion
+    TryThis.addSuggestion stx suggestion
   | _ => pure ()
 
--- Function to analyze `have` block and display variable types
-def analyzeHaveBlock (haveSyntax : Syntax) : MetaM Unit := do
-  -- Pattern match on the syntax of the `have` block
-  match haveSyntax with
-  | `(tactic| have $hyp : $type := $proof) => do
-    IO.println s!": {hyp}"
-    IO.println s!": {type}"
 
-  | `(tactic| have ($hps : $types) := $proof) => do
 
-    for (hp, tp) in hps.zip types do
-      IO.println s!"{hp}, Type: {tp}"
-  | _ =>
-    pure ()
+def iterateAndSuggest(code: Syntax): CommandElabM Unit := do
+  let cats := (Parser.parserExtension.getState (← getEnv)).categories
+  let some tactics := Parser.ParserCategory.kinds <$> cats.find? `tactic
+    |return
+  let (_, tacticMap)  ← StateRefT'.run (m := IO) (UnreachableTactic.getTactics ∅ (fun k => tactics.contains k) code) ∅
 
-def iterateAndAnalyzeHave (code : Syntax) : TacticM Unit := do
-  for node in code.children do
-    if node.getKind == `Lean.Parser.Tactic.have then
-      analyzeHaveBlock node
-
--- Adjust the function's context to match `Elab.Command.CommandElabM`
-def iterateAndSuggest(code: Syntax): Elab.Command.CommandElabM Unit := do
-  let linterResults ← Std.Linter.UnreachableTactic.unreachableTacticLinter.run code
-  match linterResults with
-  | some results => do
-      for result in results do
-        IO.println s!"Lint result: {result}"
-  | none =>
-      IO.println "No lint results"
-
-  -- Ensure the function ends with `Unit`
+  for (_,tactic) in tacticMap do
+    liftTermElabM (suggestSimplifiedHaveSyntax tactic)
   pure ()
+
+def structureProofLinter : Linter where
+  run := iterateAndSuggest
+  name := `structureProofLinter
+initialize addLinter structureProofLinter
