@@ -1,11 +1,10 @@
-import Main
+import TestProject
 import Lean
 
 theorem example_theorem (a b : Nat) : a + b = b + a := by
   have h₁ := by
     exact Nat.add_comm a b
   exact h₁
-
 
 open Lean.Meta
 
