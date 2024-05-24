@@ -30,9 +30,13 @@ def suggestSimplifiedHaveSyntax  (stx : Syntax) : TermElabM Unit := do
     TryThis.addSuggestion stx suggestion
   | _ => pure ()
 
+register_option linter.structureProof : Bool := {
+  defValue := true
+}
 
 
 def iterateAndSuggest(code: Syntax): CommandElabM Unit := do
+  Linter.logLint linter.structureProof code "hello"
   let cats := (Parser.parserExtension.getState (← getEnv)).categories
   let some tactics := Parser.ParserCategory.kinds <$> cats.find? `tactic
     |return
@@ -45,4 +49,5 @@ def iterateAndSuggest(code: Syntax): CommandElabM Unit := do
 def structureProofLinter : Linter where
   run := iterateAndSuggest
   name := `structureProofLinter
+
 initialize addLinter structureProofLinter
