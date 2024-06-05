@@ -9,32 +9,43 @@ open Elab
 open Tactic
 open Command
 open Term
-
-def suggestSimplifiedHaveSyntax  (stx : Syntax) : TermElabM Unit := do
-  match stx with
-  | `(tactic| have $hyp := $proof) => do
-    -- Expr in a MetaM context
-    let proofExpr ←  elabTerm proof none
-    let proofType ← inferType proofExpr
-    let typeStx ← PrettyPrinter.delab proofType
-
-    let suggestionText ←  `(tactic | have $hyp : $typeStx := $proof)
-    let suggestion: TryThis.Suggestion := {
-      suggestion := suggestionText,
-      preInfo? := none,
-      postInfo? := none,
-      style? := none
-    }
-    TryThis.addSuggestion stx suggestion
-  | _ => pure ()
+open Lean Linter
 
 register_option linter.structureProof : Bool := {
   defValue := true
 }
 
+def suggestSimplifiedHaveSyntax  (stx : Syntax) : TermElabM Unit := do
+  match stx with
+  | `(tactic| have $hyp := $proof) => do
+    -- Expr in a MetaM context
+    let infoTrees := (← getInfoState).trees.toArray
+    let info? := infoTrees.findSome? (fun infoT => InfoTree.findInfo? (fun info => info.stx == hyp) infoT)
+
+    match info? with
+    | none => logLint linter.structureProof stx "No info found for the following syntax"
+    | some (Info.ofTermInfo termInfo) =>
+      match termInfo.expectedType? with
+      | none => logLint linter.structureProof stx "No expected type"
+      | some expectedType =>
+        let expectedTypeExpr : Lean.Expr := expectedType
+        let typeStx ← PrettyPrinter.delab (← instantiateMVars expectedTypeExpr)
+        let suggestionText ←  `(tactic | have $hyp : $typeStx := $proof)
+        let suggestion: TryThis.Suggestion := {
+          suggestion := suggestionText,
+          preInfo? := none,
+          postInfo? := none,
+          style? := none
+        }
+        TryThis.addSuggestion stx suggestion
+    | _ => logLint linter.structureProof stx "no TermInfo"
+  | _ => pure ()
+
+
 
 def iterateAndSuggest(code: Syntax): CommandElabM Unit := do
-  Linter.logLint linter.structureProof code "hello"
+  if !linter.structureProof.get (← getOptions) then
+    return
   let cats := (Parser.parserExtension.getState (← getEnv)).categories
   let some tactics := Parser.ParserCategory.kinds <$> cats.find? `tactic
     |return
