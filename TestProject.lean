@@ -15,29 +15,26 @@ register_option linter.structureProof : Bool := {
   defValue := true
 }
 
-def suggestSimplifiedHaveSyntax  (stx : Syntax) : TermElabM Unit := do
+def suggestSimplifiedHaveSyntax  (stx : Syntax) (infoTrees : Array InfoTree) : TermElabM Unit := do
   match stx with
   | `(tactic| have $hyp := $proof) => do
     -- Expr in a MetaM context
-    let infoTrees := (← getInfoState).trees.toArray
-    let info? := infoTrees.findSome? (fun infoT => InfoTree.findInfo? (fun info => info.stx == hyp) infoT)
+    logLint linter.structureProof stx m!"{infoTrees.size}"
+    let info? := infoTrees.findSome? (fun infoT => InfoTree.foldInfo (init := none) (fun ctxInfo info oldState => if info.stx == hyp then some (ctxInfo,info) else oldState ) infoT)
 
     match info? with
     | none => logLint linter.structureProof stx "No info found for the following syntax"
-    | some (Info.ofTermInfo termInfo) =>
-      match termInfo.expectedType? with
-      | none => logLint linter.structureProof stx "No expected type"
-      | some expectedType =>
-        let expectedTypeExpr : Lean.Expr := expectedType
-        let typeStx ← PrettyPrinter.delab (← instantiateMVars expectedTypeExpr)
-        let suggestionText ←  `(tactic | have $hyp : $typeStx := $proof)
-        let suggestion: TryThis.Suggestion := {
-          suggestion := suggestionText,
-          preInfo? := none,
-          postInfo? := none,
-          style? := none
-        }
-        TryThis.addSuggestion stx suggestion
+    | some (ctxInfo, Info.ofTermInfo termInfo) =>
+      let type ← ctxInfo.runMetaM termInfo.lctx (do PrettyPrinter.delab ( ← instantiateMVars ( ← inferType termInfo.expr) ))
+      let suggestionText ←  `(tactic | have $hyp : $type := $proof)
+      let suggestion: TryThis.Suggestion := {
+        suggestion := suggestionText,
+        preInfo? := none,
+        postInfo? := none,
+        style? := none
+      }
+      -- TryThis.addSuggestion stx suggestion
+      logLint linter.structureProof stx m!"{suggestionText}"
     | _ => logLint linter.structureProof stx "no TermInfo"
   | _ => pure ()
 
@@ -50,9 +47,9 @@ def iterateAndSuggest(code: Syntax): CommandElabM Unit := do
   let some tactics := Parser.ParserCategory.kinds <$> cats.find? `tactic
     |return
   let (_, tacticMap)  ← StateRefT'.run (m := IO) (UnreachableTactic.getTactics ∅ (fun k => tactics.contains k) code) ∅
-
+  let infoTrees := (← get).infoState.trees.toArray
   for (_,tactic) in tacticMap do
-    liftTermElabM (suggestSimplifiedHaveSyntax tactic)
+    liftTermElabM (suggestSimplifiedHaveSyntax tactic infoTrees)
   pure ()
 
 def structureProofLinter : Linter where
