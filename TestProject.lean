@@ -27,15 +27,18 @@ def suggestSimplifiedHaveSyntax  (stx : Syntax) (infoTrees : Array InfoTree) : T
     | some (ctxInfo, Info.ofTermInfo termInfo) =>
       let type ← ctxInfo.runMetaM termInfo.lctx (do PrettyPrinter.delab ( ← instantiateMVars ( ← inferType termInfo.expr) ))
       let suggestionText ←  `(tactic | have $hyp : $type := $proof)
-      let suggestion: TryThis.Suggestion := {
-        suggestion := suggestionText,
-        preInfo? := none,
-        postInfo? := none,
-        style? := none
-      }
       -- TryThis.addSuggestion stx suggestion
       logLint linter.structureProof stx m!"{suggestionText}"
     | _ => logLint linter.structureProof stx "no TermInfo"
+  | `(tactic| let $hyp := $proof) => do
+      let info? := infoTrees.findSome? (fun infoT => InfoTree.foldInfo (init := none) (fun ctxInfo info oldState => if info.stx == hyp then some (ctxInfo, info) else oldState) infoT)
+      match info? with
+      | none => logLint linter.structureProof stx "No info found for the following syntax"
+      | some (ctxInfo, Info.ofTermInfo termInfo) =>
+          let type ← ctxInfo.runMetaM termInfo.lctx (do PrettyPrinter.delab (← instantiateMVars (← inferType termInfo.expr)))
+          let suggestionText ← `(tactic| let $hyp : $type := $proof)
+          logLint linter.structureProof stx m!"{suggestionText}"
+      | _ => logLint linter.structureProof stx "no TermInfo"
   | _ => pure ()
 
 

@@ -11,3 +11,8 @@ open Lean.Meta
   let linters ← Lean.Elab.Command.lintersRef.get
   linters.forM fun linter =>
     IO.println linter.name
+
+example : 2 + 2 = 4 := by
+  let x := 2 + 2
+  show x = 4
+  rfl
