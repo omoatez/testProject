@@ -17,15 +17,26 @@ example : 2 + 2 = 4 := by
   show x = 4
   rfl
 
-example (n : Nat) : n + 0 = n := by
-  SSuffices n = n by simp
+set_option linter.structureProof true
 
-example (n m : Nat) (h : n + m = m + n) : (n + 0) + m = m + (n + 0) := by
-  SSuffices n + m = m + n by simp
+example : Nat := by
+  have h := 1 + 1
+  trivial
 
-example (a b : Nat) : a + b = b + a := by
-  apply some_tactic
-  rw [Nat.add_comm]
+example (a b : Nat) (h : a = b) : a + 1 = b + 2 := by
+  SSuffices False by
+    rw [h]
+    simp
 
-example : T := by
-  simp??
+example (x y : Nat) (h : x + y = y + x) : x + y + 0 = y + x := by
+  simpSeq??
+    rw [Nat.add_assoc],
+    apply Eq.symm,
+    simp,
+    exact h
+  
+
+
+example (a b c : Nat) : a * (b + c) + b * c = b * c + a * c + a * b := by
+  ssimp by
+    simp [Nat.mul_add, Nat.add_comm, Nat.add_assoc, Nat.mul_comm]
