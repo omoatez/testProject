@@ -13,6 +13,7 @@ open Term
 open Lean Linter
 open Aesop
 open PrettyPrinter
+open Parser.Tactic
 
 register_option linter.structureProof : Bool := {
   defValue := true
@@ -50,7 +51,7 @@ def suggestSimplifiedHaveSyntax  (stx : Syntax) (infoTrees : Array InfoTree) : T
       let type ← ctxInfo.runMetaM termInfo.lctx (do PrettyPrinter.delab ( ← instantiateMVars ( ← inferType termInfo.expr) ))
       let suggestionText ←  `(tactic | have $hyp : $type := $proof)
       -- TryThis.addSuggestion stx suggestion
-      logLint linter.structureProof stx m!"{suggestionText}"
+      --logLint linter.structureProof stx m!"{suggestionText}"
     | _ => logLint linter.structureProof stx "no TermInfo"
   | `(tactic| let $hyp := $proof) => do
       let info? := infoTrees.findSome? (fun infoT => InfoTree.foldInfo (init := none) (fun ctxInfo info oldState => if info.stx == hyp then some (ctxInfo, info) else oldState) infoT)
@@ -153,75 +154,33 @@ def iterateAndSuggest(code: Syntax): CommandElabM Unit := do
     liftTermElabM (suggestSimplifiedHaveSyntax tactic infoTrees)
   pure ()
 
- -- TODO refactor simp??
-syntax (name := simp??) "ssimp" : tactic
+syntax (name := simp?) "simp?" (config)? (discharger)? (&" only")?
+  (" [" withoutPosition((simpStar <|> simpErase <|> simpLemma),*,?) "]")? (location)?:tactic
 
-@[tactic simp??] def evalSimpQuestion : Tactic := fun stx => do
-  -- Get the current goal and its type
+@[tactic simp?]
+def evalSimpQuestionMark : Tactic := fun stx => do
+  evalTactic (← `(tactic| simp))
+
   let goal ← getMainGoal
-  let goalType ← goal.getType
+  let mainGoalType ← goal.getType
 
-  -- Apply the simpGoal function
-  let (simplifiedResult, stats) ← simpGoal goal {}
+  let mainGoalTypeStx ← delab mainGoalType
+  let suggestionText ← `(tactic| SSuffices $mainGoalTypeStx by simp)
+  TryThis.addSuggestion stx suggestionText
 
-  match simplifiedResult with
-  | none =>
-    logInfo "simp made no progress"
-  | some (_, newMVarId) =>
-    if stats.usedTheorems.size == 0 then
-      logInfo "simp made no progress"
-    else
-      let U ← mkFreshExprMVar (← Lean.MVarId.getType newMVarId)
-      let suggestionText ← `(tactic | suffices $(mkIdent `hyp):ident : _ by simp)
-      Lean.Meta.Tactic.TryThis.addSuggestion stx suggestionText
-      let subgoal1 ← mkFreshExprMVar (← Lean.MVarId.getType newMVarId)
-      replaceMainGoal [newMVarId, subgoal1.mvarId!]
+syntax (name := rw?) "rw?"  (config)? (&" only")?
+  (" [" withoutPosition((rwRule),*,?) "]")? (location)?: tactic
 
-      setGoals [newMVarId]
-      evalTactic (← `(tactic| simp))
-      pure ()
+@[tactic rw?]
+def evalRwQuestionMark : Tactic := fun stx => do
+  evalTactic (← `(tactic| rw[]))
+  let goal ← getMainGoal
+  let mainGoalType ← goal.getType
 
+  let mainGoalTypeStx ← delab mainGoalType
 
-
-syntax (name := simpSeq??) "simpSeq??" tacticSeq : tactic
-
-@[tactic simpSeq??] def evalSimpSeqQuestion : Tactic := fun stx => do
-  match stx with
-  | `(tactic| simpSeq?? $tacticSeq) => do
-    let mut suggestions := #[]
-    let mut newGoals := #[]
-
-    let tacticList := tactics
-
-    for tactic in tacticList do
-      setGoals [← getMainGoal]
-
-      evalTactic tactic
-
-      let goal ← getMainGoal
-      let goalType ← goal.getType
-
-      let (simplifiedResult, stats) ← simpGoal goal {}
-      match simplifiedResult with
-      | none =>
-        logInfo m!"simp made no progress after: {tactic}"
-      | some (_, newMVarId) =>
-        if stats.usedTheorems.size == 0 then
-          logInfo m!"simp made no progress after: {tactic}"
-        else
-          let suggestionText ← `(tactic | suffices $(mkIdent `hyp):ident : _ by simp)
-          suggestions := suggestions.push suggestionText
-          newGoals := newGoals.push newMVarId
-
-    if suggestions.size > 0 then
-      let combinedSuggestion ← `(tactic| simpSeq?? $suggestions)
-      logInfo m!"Generated combined suggestion: {combinedSuggestion}"
-      Lean.Meta.Tactic.TryThis.addSuggestion stx combinedSuggestion
-    else
-      logInfo "no simplifications were suggested for the sequence."
-
-    replaceMainGoal newGoals.toList
-  | _ => throwUnsupportedSyntax
+  let suggestionText ← `(tactic| SSuffices $mainGoalTypeStx by rw[])
+  TryThis.addSuggestion stx suggestionText
 
 
 def structureProofLinter : Linter where
