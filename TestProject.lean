@@ -1,4 +1,3 @@
-import «TestProject».Basic
 import Lean
 import Std
 import Aesop
@@ -21,47 +20,19 @@ register_option linter.structureProof : Bool := {
 
 syntax (name := showQuestion) "show?" : tactic
 
-@[tactic showQuestion] def evalShowQuestion : Tactic := fun _stx => do
-  let goal ← getMainGoal
-  let goalType ← goal.getType
-  let goalTypeString ← PrettyPrinter.delab goalType
-
-  let suggestionText : SuggestionText := "apply some_tactic"
-  let suggestion : Suggestion := {
-    suggestion := suggestionText,
-    preInfo? := some "Try this tactic: ",
-    postInfo? := none,
-    style? := none,
-    messageData? := none,
-    toCodeActionTitle? := none
-  }
-  Lean.Meta.Tactic.TryThis.addSuggestion _stx suggestion
-  return ()
-
-def suggestSimplifiedHaveSyntax  (stx : Syntax) (infoTrees : Array InfoTree) : TermElabM Unit := do
+@[tactic showQuestion] def evalShowQuestion : Tactic := fun stx => do
   match stx with
-  | `(tactic| have $hyp := $proof) => do
-    -- Expr in a MetaM context
-    logLint linter.structureProof stx m!"{infoTrees.size}"
-    let info? := infoTrees.findSome? (fun infoT => InfoTree.foldInfo (init := none) (fun ctxInfo info oldState => if info.stx == hyp then some (ctxInfo,info) else oldState ) infoT)
+  | `(tactic| show?) => do
+    let goal ← getMainGoal
+    let goalType ← goal.getType
+    let goalTerm ← PrettyPrinter.delab goalType
 
-    match info? with
-    | none => logLint linter.structureProof stx "No info found for the following syntax"
-    | some (ctxInfo, Info.ofTermInfo termInfo) =>
-      let type ← ctxInfo.runMetaM termInfo.lctx (do PrettyPrinter.delab ( ← instantiateMVars ( ← inferType termInfo.expr) ))
-      let suggestionText ←  `(tactic | have $hyp : $type := $proof)
-      -- TryThis.addSuggestion stx suggestion
-      --logLint linter.structureProof stx m!"{suggestionText}"
-    | _ => logLint linter.structureProof stx "no TermInfo"
-  | `(tactic| let $hyp := $proof) => do
-      let info? := infoTrees.findSome? (fun infoT => InfoTree.foldInfo (init := none) (fun ctxInfo info oldState => if info.stx == hyp then some (ctxInfo, info) else oldState) infoT)
-      match info? with
-      | none => logLint linter.structureProof stx "No info found for the following syntax"
-      | some (ctxInfo, Info.ofTermInfo termInfo) =>
-          let type ← ctxInfo.runMetaM termInfo.lctx (do PrettyPrinter.delab (← instantiateMVars (← inferType termInfo.expr)))
-          let suggestionText ← `(tactic| let $hyp : $type := $proof)
-          logLint linter.structureProof stx m!"{suggestionText}"
-      | _ => logLint linter.structureProof stx "no TermInfo"
+    let goalTypeExpr ← Meta.inferType goalType
+    let goalTypeTerm ← PrettyPrinter.delab goalTypeExpr
+
+    let suggestion : TSyntax `tactic ← `(tactic| show ($goalTerm : $goalTypeTerm))
+
+    TryThis.addSuggestion stx suggestion
   | _ => pure ()
 
 def suggestHaveSyntax(stx : Syntax) (infoTrees : Array InfoTree) : TermElabM Unit := do
@@ -76,14 +47,14 @@ def suggestHaveSyntax(stx : Syntax) (infoTrees : Array InfoTree) : TermElabM Uni
 
     match info? with
     | none =>
-      logLint linter.structureProof stx "No info found for the following syntax"
+      logLint linter.structureProof stx "no info found for the following syntax"
     | some (ctxInfo, Info.ofTermInfo termInfo) =>
       let type ← ctxInfo.runMetaM termInfo.lctx (do
         PrettyPrinter.delab (← instantiateMVars (← inferType termInfo.expr))
       )
       let suggestionText ← `(tactic | have $hyp : $type := $proof)
       TryThis.addSuggestion stx suggestionText
-    | _ => logLint linter.structureProof stx "no TermInfo"
+    | _ => logLint linter.structureProof stx "no termInfo"
 
   | `(tactic| let $hyp := $proof) => do
     let info? := infoTrees.findSome? (fun infoT =>
@@ -95,23 +66,22 @@ def suggestHaveSyntax(stx : Syntax) (infoTrees : Array InfoTree) : TermElabM Uni
 
     match info? with
     | none =>
-      logLint linter.structureProof stx "No info found for the following syntax"
+      logLint linter.structureProof stx "no info found for the following syntax"
     | some (ctxInfo, Info.ofTermInfo termInfo) =>
       let type ← ctxInfo.runMetaM termInfo.lctx (do
         PrettyPrinter.delab (← instantiateMVars (← inferType termInfo.expr))
       )
       let suggestionText ← `(tactic | let $hyp : $type := $proof)
       TryThis.addSuggestion stx suggestionText
-    | _ => logLint linter.structureProof stx "no TermInfo"
+    | _ => logLint linter.structureProof stx "no termInfo"
 
   | _ => pure ()
 
-syntax (name := ssuffices) "SSuffices " term " by" tacticSeq : tactic
+syntax (name := ssuffices) "ssuffices " term " by" tacticSeq : tactic
 
 @[tactic ssuffices] def evalSSuffices : Tactic := fun stx => do
   match stx with
-  | `(tactic| SSuffices $expectedType by $tactic) => do
-    -- Get the current goal and its type
+  | `(tactic| ssuffices $expectedType by $tactic) => do
     evalTactic tactic
     let goals ← getGoals
     if (goals.length > 1) then throwError "more than one goal"
@@ -129,16 +99,17 @@ syntax (name := SSuffices) "SSuffices?" "by" tacticSeq : tactic
 
   match stx with
   |`(tactic| SSuffices? by $tacticSeq) => do
-    evalTactic tacticSeq
-    let newGoal ← getMainGoal
-    let newGoalType ← newGoal.getType
-    let newGoalTypeString ← PrettyPrinter.delab newGoalType
+    withNewMCtxDepth do
+      evalTactic tacticSeq
+      let newGoal ← getMainGoal
+      let newGoalType ← newGoal.getType
+      let newGoalTypeString ← PrettyPrinter.delab newGoalType
 
-    logInfo m!"New goal type: {newGoalTypeString}"
+      logInfo m!"New goal type: {newGoalTypeString}"
 
-    let suggestionText ←  `(tactic | SSuffices $newGoalTypeString by $tacticSeq)
+      let suggestionText ←  `(tactic | ssuffices $newGoalTypeString by $tacticSeq)
 
-    TryThis.addSuggestion stx suggestionText
+      TryThis.addSuggestion stx suggestionText
   | _ => throwUnsupportedSyntax
 
 
@@ -148,10 +119,11 @@ def iterateAndSuggest(code: Syntax): CommandElabM Unit := do
   let cats := (Parser.parserExtension.getState (← getEnv)).categories
   let some tactics := Parser.ParserCategory.kinds <$> cats.find? `tactic
     |return
-  let (_, tacticMap)  ← StateRefT'.run (m := IO)  (Batteries.Linter.UnreachableTactic.getTactics ∅ (fun k => tactics.contains k) code) ∅
+  let (_, tacticMap)  ← StateRefT'.run (m := IO)
+   (Batteries.Linter.UnreachableTactic.getTactics ∅ (fun k => tactics.contains k) code) ∅
   let infoTrees := (← get).infoState.trees.toArray
   for (_,tactic) in tacticMap do
-    liftTermElabM (suggestSimplifiedHaveSyntax tactic infoTrees)
+    liftTermElabM (suggestHaveSyntax tactic infoTrees)
   pure ()
 
 syntax (name := simp?) "simp?" (config)? (discharger)? (&" only")?
@@ -159,28 +131,14 @@ syntax (name := simp?) "simp?" (config)? (discharger)? (&" only")?
 
 @[tactic simp?]
 def evalSimpQuestionMark : Tactic := fun stx => do
-  evalTactic (← `(tactic| simp))
+    evalTactic (← `(tactic| simp))
+    let newGoal ← getMainGoal
+    let newGoalType ← newGoal.getType
+    let newGoalTypeDelab ← PrettyPrinter.delab newGoalType
 
-  let goal ← getMainGoal
-  let mainGoalType ← goal.getType
-
-  let mainGoalTypeStx ← delab mainGoalType
-  let suggestionText ← `(tactic| SSuffices $mainGoalTypeStx by simp)
-  TryThis.addSuggestion stx suggestionText
-
-syntax (name := rw?) "rw?"  (config)? (&" only")?
-  (" [" withoutPosition((rwRule),*,?) "]")? (location)?: tactic
-
-@[tactic rw?]
-def evalRwQuestionMark : Tactic := fun stx => do
-  evalTactic (← `(tactic| rw[]))
-  let goal ← getMainGoal
-  let mainGoalType ← goal.getType
-
-  let mainGoalTypeStx ← delab mainGoalType
-
-  let suggestionText ← `(tactic| SSuffices $mainGoalTypeStx by rw[])
-  TryThis.addSuggestion stx suggestionText
+    logInfo m!"New goal type: {newGoalTypeDelab}"
+    let suggestionText ← `(tactic| ssuffices $newGoalTypeDelab by simp)
+    TryThis.addSuggestion stx suggestionText
 
 
 def structureProofLinter : Linter where
